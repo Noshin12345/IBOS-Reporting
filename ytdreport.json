@@ -1,0 +1,366 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "// Get raw AI output safely\nlet rawText = $input.first().json.output || \"\";\n\n// Normalize line breaks and remove unwanted formatting\nrawText = rawText\n  .replace(/\\r/g, \"\")\n  .replace(/\\*/g, \"\")\n  .replace(/#/g, \"\")\n  .trim();\n\nconst lines = rawText.split(\"\\n\").map(l => l.trim()).filter(l => l !== \"\");\n\n// Helper: safely extract numbers, treat empty or invalid as 0\nfunction parseNumber(val) {\n  if (!val || val === \"\") return 0;\n  const cleaned = val.replace(/[^\\d.-]/g, \"\");\n  return cleaned === \"\" ? 0 : Number(cleaned);\n}\n\nlet reports = {};\nlet currentSection = null;\nlet currentKPI = null;\n\nfor (let line of lines) {\n  // Detect section header: \"YTD Report: (Section Name)\"\n  let sectionMatch = line.match(/^YTD Report[:\\s-]*\\(?(.+?)\\)?$/i);\n  if (sectionMatch) {\n    currentSection = sectionMatch[1].trim() || \"Unknown\";\n    if (!reports[currentSection]) reports[currentSection] = {};\n    currentKPI = null;\n    continue;\n  }\n\n  // Detect KPI name line (starts with dash, may or may not have colon)\n  let kpiMatch = line.match(/^-\\s*([^:]+):?$/);\n  if (kpiMatch && currentSection) {\n    currentKPI = kpiMatch[1].trim();\n    if (!reports[currentSection][currentKPI]) reports[currentSection][currentKPI] = {};\n    continue;\n  }\n\n  // Detect sub-values: \"- Key: Value\"\n  let valueMatch = line.match(/^-\\s*([^:]+):\\s*(.*)$/);\n  if (valueMatch && currentSection && currentKPI) {\n    let key = valueMatch[1].trim();\n    let val = valueMatch[2].trim();\n    reports[currentSection][currentKPI][key] = parseNumber(val);\n  }\n}\n\nreturn [{ json: reports }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4220,
+        2840
+      ],
+      "id": "8bcd2e0f-f23a-4177-be3d-c9e76d47482c",
+      "name": "Code"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {}
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        3300,
+        3160
+      ],
+      "id": "929bfd33-992e-4204-9037-028171d8d587",
+      "name": "Schedule Trigger2"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Flatten all parsed items\n// If input is structured as {Section: {Metric: {subValues}}}, convert it\nconst items = [];\n\nfor (const entry of $input.all()) {\n  const data = entry.json;\n  for (const section in data) {\n    for (const metric in data[section]) {\n      const values = data[section][metric];\n      items.push({\n        section,\n        metric,\n        ytdTarget: values[\"YTD Target\"] ?? 0,\n        todaysAchievement: values[\"Today's Achievement\"] ?? 0,\n        ytdAchieved: values[\"YTD Achieved\"] ?? 0,\n        lastMonthSameDate: values[\"Last Month's Same Date\"] ?? 0,\n        remaining: values[\"Remaining\"] ?? 0\n      });\n    }\n  }\n}\n\n// Group by section\nconst grouped = {};\nfor (const item of items) {\n  const section = item.section || \"Unknown\";\n  if (!grouped[section]) grouped[section] = [];\n  grouped[section].push(item);\n}\n\n// Helper: clean metric name\nfunction getMetricName(str) {\n  if (!str) return \"-\";\n  return str.replace(/[:#*]/g, \"\").trim();\n}\n\n// Auto-detect section order (All Products first, then alphabetically)\nlet sectionOrder = Object.keys(grouped);\nsectionOrder.sort((a, b) => {\n  if (a.toLowerCase().includes(\"all products\")) return -1;\n  if (b.toLowerCase().includes(\"all products\")) return 1;\n  return a.localeCompare(b);\n});\n\n// Build HTML\nlet html = `<h2 style=\"text-align:center;\">YTD Report Summary for iBOS</h2>`;\n\nfor (const section of sectionOrder) {\n  html += `<h3 style=\"margin-top:20px;\">${section}</h3>`;\n  html += `\n    <table border=\"1\" cellspacing=\"0\" cellpadding=\"6\" \n           style=\"border-collapse:collapse; width:100%; font-family:sans-serif; font-size:13px;\">\n      <thead style=\"background:#f2f2f2;\">\n        <tr>\n          <th>Metric</th>\n          <th>YTD Target</th>\n          <th>Today's Achievement</th>\n          <th>YTD Achieved</th>\n          <th>Last Month Same Date</th>\n          <th>Remaining</th>\n        </tr>\n      </thead>\n      <tbody>\n  `;\n\n  for (const row of grouped[section]) {\n    html += `\n      <tr>\n        <td>${getMetricName(row.metric)}</td>\n        <td style=\"text-align:right;\">${row.ytdTarget}</td>\n        <td style=\"text-align:right;\">${row.todaysAchievement}</td>\n        <td style=\"text-align:right;\">${row.ytdAchieved}</td>\n        <td style=\"text-align:right;\">${row.lastMonthSameDate}</td>\n        <td style=\"text-align:right;\">${row.remaining}</td>\n      </tr>\n    `;\n  }\n\n  html += `</tbody></table>`;\n}\n\nreturn [{ json: { html } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4440,
+        2840
+      ],
+      "id": "b8537a72-8134-451b-a685-2650e0bcf633",
+      "name": "Code17"
+    },
+    {
+      "parameters": {
+        "url": "https://mgm.ibos.io/sme/ExternalApi/GetYearlyYTDProductWiseAlsoSummaryWise?seedId=f8945fd6-72ec-4a9e-a15f-a14815f1e006&token=di1O%2F0uMyNvIjlOTWLTEt%2FNA3%2FP6JCRpHqZmkliNLznxdQ4o0aCxsSvwP99YzS0xOSKvVlNsQLKT8KUC145GDg%3D%3D",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.2,
+      "position": [
+        4120,
+        3060
+      ],
+      "id": "4134b325-4ee8-42a5-ba56-45cfb46fe8b8",
+      "name": "ytd"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "GET all the YTD Report. Use the HTTPS tool to get all the information.donot remove any data..make sure.donot use stars.make sure you add YTD Report: (All Products, Managerium\", \"PeopleDesk\", \"Prime VAT\" Separately",
+        "options": {
+          "systemMessage": "Use all the HTTPS tools to get all the information. Keep information from both HTTP Request1.donot use stars and table. make sure you add YTD Report: (All Products, Managerium\", \"PeopleDesk\", \"Prime VAT\" Separately info.donot use stars anywhere"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 2,
+      "position": [
+        3860,
+        2840
+      ],
+      "id": "7669945e-4d29-42cd-9a3d-06e1b05bb324",
+      "name": "AI Agent"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-4o-mini"
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        3900,
+        3060
+      ],
+      "id": "bd653440-7ff9-4873-9044-278dda227dfb",
+      "name": "OpenAI Chat Model",
+      "credentials": {
+        "openAiApi": {
+          "id": "SUyJI0IfI9M95Z5b",
+          "name": "OpenAi account 89"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://mgm.ibos.io/sme/ExternalApi/GetYearlyYTDProductWiseAlsoSummaryWise?seedId=e7c5d652-761a-44cf-807f-7f52ec517216&token=di1O%2F0uMyNvIjlOTWLTEt%2FNA3%2FP6JCRpHqZmkliNLzk2nnEO%2Fya25XN1m5deM40%2Bu%2BroXR%2FWWkAIjIPpwUXLiA%3D%3D",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.2,
+      "position": [
+        3980,
+        3560
+      ],
+      "id": "b87d6eda-16e4-40c3-9ac7-3712cf95663a",
+      "name": "ytd12"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "GET all the YTD Report. Use the HTTPS tool to get all the information.donot remove any data.make sure",
+        "options": {
+          "systemMessage": "Use all the HTTPS tools to get all the information. Keep information from both HTTP Request1.send all the info of YTD.donot miss any information. fetch all the information of YTD Report: (All Products).donot make tables and stars.donot give me extra info.mention it in 1st.not use star,hash symbolremove that type of content The report is structured similarly for different products, including Oracle, Microsoft, Cyber Security, Backup Solution, Digital Platform, ManageEngine, VDI, RedHat, VMware, and Public Sector, each with corresponding metrics relevant to their specific sales values, sales count, proposals, meetings, client visits, leads generated, and calls made.\\n\\nIf you need details for a specific product or more information, please let me know."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 2,
+      "position": [
+        3680,
+        3340
+      ],
+      "id": "7bc7e3e2-2596-4ff2-8f65-2952fc215ccb",
+      "name": "AI Agent17"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-4o-mini"
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        3640,
+        3580
+      ],
+      "id": "1a96833f-3894-4a88-b8e4-e6a916a9c8bb",
+      "name": "OpenAI Chat Model14",
+      "credentials": {
+        "openAiApi": {
+          "id": "SUyJI0IfI9M95Z5b",
+          "name": "OpenAi account 89"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "let rawText = $input.first().json.output || '';\nrawText = rawText.replace(/\\r/g, '').trim();\n\nconst lines = rawText.split(\"\\n\").map(l => l.trim());\nconst data = [];\nlet currentMetric = null;\nlet buffer = [];\n\n// Group metrics with their details\nfor (let line of lines) {\n    if (line.startsWith(\"- \") && !line.includes(\"Target\") && \n        !line.includes(\"Achievement\") && !line.includes(\"Achieved\") &&\n        !line.includes(\"Last Month\") && !line.includes(\"Remaining\")) {\n        \n        // New metric line\n        if (currentMetric) {\n            data.push({ metric: currentMetric, text: buffer.join(\" \") });\n        }\n        currentMetric = line.replace(/^-\\s*/, '').replace(/:$/, '').trim();\n        buffer = [];\n    } else if (currentMetric) {\n        buffer.push(line);\n    }\n}\n// Push last metric\nif (currentMetric) {\n    data.push({ metric: currentMetric, text: buffer.join(\" \") });\n}\n\n// Extract numeric fields (keep even if zero)\nfunction getField(text, label) {\n    const regex = new RegExp(label + \":\\\\s*([0-9,]*)\", \"i\");\n    const match = text.match(regex);\n    return match ? match[1].replace(/,/g, '') || \"0\" : \"0\";\n}\n\n// ✅ Fixed list of 8 metrics in order\nconst allowedMetrics = [\n    \"Sales Value (b)\",\n    \"Number of Sales (Deals)\",\n    \"Proposal Value (b)\",\n    \"Number of Proposals Sent\",\n    \"Number of Meetings\",\n    \"Number of Client Visits\",\n    \"Number of Leads Generated\",\n    \"Number of Calls Made\"\n];\n\nlet cleanedData = allowedMetrics.map(m => {\n    let found = data.find(d => d.metric === m);\n    if (!found) {\n        return {\n            metric: m,\n            target: \"0\",\n            today: \"0\",\n            achieved: \"0\",\n            lastMonth: \"0\",\n            remaining: \"0\"\n        };\n    }\n    return {\n        metric: found.metric,\n        target: getField(found.text, \"YTD Target\"),\n        today: getField(found.text, \"Today's Achievement\"),\n        achieved: getField(found.text, \"YTD Achieved\"),\n        lastMonth: getField(found.text, \"Last Month Same Date\"),\n        remaining: getField(found.text, \"Remaining\")\n    };\n});\n\nreturn [{ json: { report: cleanedData } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4160,
+        3340
+      ],
+      "id": "0f4ff58e-eb7a-4f9b-9739-c28fe67e92fb",
+      "name": "Code9"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all().map(i => i.json.report).flat(); // Flatten all reports\n\n// Optional: group by a \"section\" if you have one, else put all under \"Overall Summary\"\nconst sectionName = \"All Products\"; \nconst grouped = { [sectionName]: items };\n\n// Build HTML output\nlet html = `<h2 style=\"text-align:center; font-family:sans-serif;\">Overall Summary OEM</h2>`;\n\nfor (const section of Object.keys(grouped)) {\n    html += `<h3 style=\"margin-top:20px; font-family:sans-serif;\">${section}</h3>`;\n    html += `\n        <table border=\"1\" cellspacing=\"0\" cellpadding=\"6\" \n               style=\"border-collapse:collapse; width:100%; font-family:sans-serif;\">\n          <thead style=\"background:#f2f2f2;\">\n            <tr>\n              <th>Metric</th>\n              <th>YTD Target</th>\n              <th>Today Achievement</th>\n              <th>YTD Achieved</th>\n              <th>Last Month Same Date</th>\n              <th>Remaining</th>\n            </tr>\n          </thead>\n          <tbody>\n    `;\n\n    for (const row of grouped[section]) {\n        html += `\n            <tr>\n              <td>${row.metric || '-'}</td>\n              <td>${row.target || '-'}</td>\n              <td>${row.today || '-'}</td>\n              <td>${row.achieved || '-'}</td>\n              <td>${row.lastMonth || '-'}</td>\n              <td>${row.remaining || '-'}</td>\n            </tr>\n        `;\n    }\n\n    html += `</tbody></table>`;\n}\n\nreturn [{ json: { html } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4380,
+        3340
+      ],
+      "id": "d2ef26d8-4d29-44a3-a9d8-21d523495a62",
+      "name": "Code10"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        4820,
+        3020
+      ],
+      "id": "826ff208-dcc2-4555-9335-b26fdbc51297",
+      "name": "Merge2"
+    },
+    {
+      "parameters": {
+        "jsCode": "let combinedHtml = \"\";\n\nfor (const item of items) {\n  combinedHtml += item.json.html + \"<br><br>\";\n}\n\nreturn [{\n  json: {\n    emailBody: combinedHtml\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5080,
+        3020
+      ],
+      "id": "6a92e77d-fe29-41bf-8319-b3ece8a7dca5",
+      "name": "Code18"
+    }
+  ],
+  "connections": {
+    "Code": {
+      "main": [
+        [
+          {
+            "node": "Code17",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger2": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "AI Agent17",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code17": {
+      "main": [
+        [
+          {
+            "node": "Merge2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ytd": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ytd12": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent17",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent17": {
+      "main": [
+        [
+          {
+            "node": "Code9",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model14": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent17",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code9": {
+      "main": [
+        [
+          {
+            "node": "Code10",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code10": {
+      "main": [
+        [
+          {
+            "node": "Merge2",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge2": {
+      "main": [
+        [
+          {
+            "node": "Code18",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code18": {
+      "main": [
+        []
+      ]
+    }
+  },
+  "pinData": {
+    "AI Agent": [
+      {
+        "output": "The YTD Report is as follows:\n\nYTD Report: (All Products)\n- Sales Value (b): \n  - YTD Target: 101,200,000\n  - Today Achievement: 0\n  - YTD Achieved: 9,736,125\n  - Last Month Same Date: 5,170,000\n  - Remaining: 91,463,875\n  \n- Number of Sales (Deals):\n  - YTD Target: 0\n  - Today Achievement: 0\n  - YTD Achieved: 13\n  - Last Month Same Date: 6\n  - Remaining: 0\n  \n- Proposal Value (b):\n  - YTD Target: 0\n  - Today Achievement: 630,000\n  - YTD Achieved: 122,024,436\n  - Last Month Same Date: 12,850,000\n  - Remaining: 0\n  \n- Number of Proposals Sent:\n  - YTD Target: 0\n  - Today Achievement: 2\n  - YTD Achieved: 91\n  - Last Month Same Date: 4\n  - Remaining: 0\n  \n- Number of Meetings:\n  - YTD Target: 0\n  - Today Achievement: 11\n  - YTD Achieved: 330\n  - Last Month Same Date: 78\n  - Remaining: 0\n  \n- Number of Client Visits:\n  - YTD Target: \n  - Today Achievement: 4\n  - YTD Achieved: 58\n  - Last Month Same Date: 0\n  - Remaining: 0\n  \n- Number of Leads Generated:\n  - YTD Target: 0\n  - Today Achievement: 9\n  - YTD Achieved: 358\n  - Last Month Same Date: 212\n  - Remaining: 0\n  \n- Number of Calls Made:\n  - YTD Target: 0\n  - Today Achievement: 178\n  - YTD Achieved: 7,027\n  - Last Month Same Date: 417\n  - Remaining: 0\n\nYTD Report: (Managerium)\n- Sales Value (b): \n  - YTD Target: 70,000,000\n  - Today Achievement: 0\n  - YTD Achieved: 4,770,000\n  - Last Month Same Date: 4,620,000\n  - Remaining: 65,230,000\n  \n- Number of Sales (Deals):\n  - YTD Target: 0\n  - Today Achievement: 0\n  - YTD Achieved: 8\n  - Last Month Same Date: 4\n  - Remaining: 0\n  \n- Proposal Value (b):\n  - YTD Target: 0\n  - Today Achievement: 630,000\n  - YTD Achieved: 78,860,636\n  - Last Month Same Date: 8,000,000\n  - Remaining: 0\n  \n- Number of Proposals Sent:\n  - YTD Target: 0\n  - Today Achievement: 2\n  - YTD Achieved: 68\n  - Last Month Same Date: 2\n  - Remaining: 0\n  \n- Number of Meetings:\n  - YTD Target: 0\n  - Today Achievement: 8\n  - YTD Achieved: 228\n  - Last Month Same Date: 45\n  - Remaining: 0\n  \n- Number of Client Visits:\n  - YTD Target: 0\n  - Today Achievement: 0\n  - YTD Achieved: 26\n  - Last Month Same Date: 0\n  - Remaining: 0\n  \n- Number of Leads Generated:\n  - YTD Target: 0\n  - Today Achievement: 4\n  - YTD Achieved: 244\n  - Last Month Same Date: 142\n  - Remaining: 0\n  \n- Number of Calls Made:\n  - YTD Target: 0\n  - Today Achievement: 69\n  - YTD Achieved: 6,264\n  - Last Month Same Date: 4,610\n  - Remaining: 0\n\nYTD Report: (PeopleDesk)\n- Sales Value (b): \n  - YTD Target: 30,000,000\n  - Today Achievement: 0\n  - YTD Achieved: 2,677,125\n  - Last Month Same Date: 430,000\n  - Remaining: 27,322,875\n  \n- Number of Sales (Deals):\n  - YTD Target: 0\n  - Today Achievement: 0\n  - YTD Achieved: 3\n  - Last Month Same Date: 1\n  - Remaining: 0\n  \n- Proposal Value (b):\n  - YTD Target: 0\n  - Today Achievement: 0\n  - YTD Achieved: 31,213,500\n  - Last Month Same Date: 4,850,000\n  - Remaining: 0\n  \n- Number of Proposals Sent:\n  - YTD Target: 0\n  - Today Achievement: 0\n  - YTD Achieved: 13\n  - Last Month Same Date: 2\n  - Remaining: 0\n  \n- Number of Meetings:\n  - YTD Target: 0\n  - Today Achievement: 2\n  - YTD Achieved: 71\n  - Last Month Same Date: 25\n  - Remaining: 0\n  \n- Number of Client Visits:\n  - YTD Target: 0\n  - Today Achievement: 4\n  - YTD Achieved: 27\n  - Last Month Same Date: 0\n  - Remaining: 0\n  \n- Number of Leads Generated:\n  - YTD Target: 0\n  - Today Achievement: 3\n  - YTD Achieved: 69\n  - Last Month Same Date: 58\n  - Remaining: 0\n  \n- Number of Calls Made:\n  - YTD Target: 0\n  - Today Achievement: 30\n  - YTD Achieved: 4,837\n  - Last Month Same Date: 4,321\n  - Remaining: 0\n\nYTD Report: (Prime VAT)\n- Sales Value (b): \n  - YTD Target: 1,200,000\n  - Today Achievement: 0\n  - YTD Achieved: 189,000\n  - Last Month Same Date: 120,000\n  - Remaining: 1,011,000\n  \n- Number of Sales (Deals):\n  - YTD Target: 0\n  - Today Achievement: 0\n  - YTD Achieved: 1\n  - Last Month Same Date: 1\n  - Remaining: 0\n  \n- Proposal Value (b):\n  - YTD Target: 0\n  - Today Achievement: 0\n  - YTD Achieved: 830,000\n  - Last Month Same Date: 0\n  - Remaining: 0\n  \n- Number of Proposals Sent:\n  - YTD Target: 0\n  - Today Achievement: 0\n  - YTD Achieved: 4\n  - Last Month Same Date: 0\n  - Remaining: 0\n  \n- Number of Meetings:\n  - YTD Target: 0\n  - Today Achievement: 0\n  - YTD Achieved: 8\n  - Last Month Same Date: 7\n  - Remaining: 0\n  \n- Number of Client Visits:\n  - YTD Target: 0\n  - Today Achievement: 0\n  - YTD Achieved: 1\n  - Last Month Same Date: 0\n  - Remaining: 0\n  \n- Number of Leads Generated:\n  - YTD Target: 0\n  - Today Achievement: 1\n  - YTD Achieved: 10\n  - Last Month Same Date: 9\n  - Remaining: 0\n  \n- Number of Calls Made:\n  - YTD Target: 0\n  - Today Achievement: 3\n  - YTD Achieved: 4,326\n  - Last Month Same Date: 4,268\n  - Remaining: 0"
+      }
+    ],
+    "AI Agent17": [
+      {
+        "output": "The YTD Report (All Products) includes the following metrics:\n\n1. **Sales Value (b)**: \n   - YTD Target: 621,600,000\n   - Today Achievement: 0\n   - YTD Achieved: 9,573,470\n   - Last Month Same Date: 0\n   - Remaining: 612,026,530\n\n2. **Number of Sales (Deals)**: \n   - YTD Target: 0\n   - Today Achievement: 0\n   - YTD Achieved: 2\n   - Last Month Same Date: 0\n   - Remaining: 0\n\n3. **Proposal Value (b)**: \n   - YTD Target: 0\n   - Today Achievement: 0\n   - YTD Achieved: 0\n   - Last Month Same Date: 0\n   - Remaining: 0\n\n4. **Number of Proposals Sent**: \n   - YTD Target: 0\n   - Today Achievement: 1\n   - YTD Achieved: 16\n   - Last Month Same Date: 0\n   - Remaining: 0\n\n5. **Number of Meetings**: \n   - YTD Target: 0\n   - Today Achievement: 1\n   - YTD Achieved: 94\n   - Last Month Same Date: 0\n   - Remaining: 0\n\n6. **Number of Client Visits**: \n   - YTD Target: \n   - Today Achievement: 0\n   - YTD Achieved: 0\n   - Last Month Same Date: 0\n   - Remaining: 0\n\n7. **Number of Leads Generated**: \n   - YTD Target: 0\n   - Today Achievement: 0\n   - YTD Achieved: 83\n   - Last Month Same Date: 0\n   - Remaining: 0\n\n8. **Number of Calls Made**: \n   - YTD Target: 0\n   - Today Achievement: 7\n   - YTD Achieved: 317\n   - Last Month Same Date: 0\n   - Remaining: 0\n\nDetailed metrics for specific products (Oracle, Microsoft, Cyber Security, Backup Solution, Digital Platform, ManageEngine, VDI, RedHat, VMware, Public Sector, Others) reflect their respective values, proposals, meetings, client visits, leads, and calls made. If additional details for a specific product are needed, please specify."
+      }
+    ]
+  },
+  "meta": {
+    "instanceId": "5d927d9375747622767f095ddf723e3b731bdcb16f3cc831c46075d0d192f10c"
+  }
+}
